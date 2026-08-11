@@ -132,6 +132,11 @@ async def job_status(job_id: str, _=Depends(require_auth)):
     return JSONResponse(j)
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok"}
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
