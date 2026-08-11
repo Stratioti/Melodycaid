@@ -5,28 +5,33 @@ import threading
 import traceback
 import urllib.request
 
+import numpy as np
+import soundfile as sf
+import torch
+import torchaudio
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-import torch
-import torchaudio
 from demucs.pretrained import get_model
 from demucs.apply import apply_model
 
 
 def load_audio(path):
-    wav, sr = torchaudio.load(path)
-    if wav.dim() == 3:
-        wav = wav.squeeze(0)
+    # soundfile returns (samples, channels); convert to (channels, samples) tensor
+    data, sr = sf.read(path, always_2d=True)
+    wav = torch.from_numpy(data.T).float()
     return wav, sr
 
 
 def save_audio(wav, path, sr):
-    if wav.dim() == 2:
-        wav = wav.unsqueeze(0)
-    torchaudio.save(path, wav.cpu(), sr)
+    # wav: (channels, samples)
+    arr = wav.cpu().numpy().T
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    sf.write(path, arr, sr)
+
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 os.makedirs(DATA_DIR, exist_ok=True)
