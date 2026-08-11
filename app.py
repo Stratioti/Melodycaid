@@ -11,9 +11,22 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 import torch
+import torchaudio
 from demucs.pretrained import get_model
 from demucs.apply import apply_model
-from demucs.audio import load_audio, save_audio
+
+
+def load_audio(path):
+    wav, sr = torchaudio.load(path)
+    if wav.dim() == 3:
+        wav = wav.squeeze(0)
+    return wav, sr
+
+
+def save_audio(wav, path, sr):
+    if wav.dim() == 2:
+        wav = wav.unsqueeze(0)
+    torchaudio.save(path, wav.cpu(), sr)
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -23,7 +36,7 @@ AUTH_TOKEN = os.environ.get("DEMUCS_AUTH_TOKEN", "")
 app = FastAPI(title="Demucs Stem Separator")
 app.mount("/files", StaticFiles(directory=DATA_DIR), name="files")
 
-jobs = {}  # job_id -> {status, progress, error?, stems?}
+jobs = {}
 lock = threading.Lock()
 
 _model = None
@@ -67,17 +80,20 @@ def run_job(job_id, audio_url):
             model.to(device)
         jobs[job_id]["progress"] = 25
 
-        wav, sr = load_audio(in_path)  # (channels, samples)
-        wav_in = wav.unsqueeze(0).to(device)  # (1, channels, samples)
+        wav, sr = load_audio(in_path)
+        if sr != model.samplerate:
+            wav = torchaudio.functional.resample(wav, sr, model.samplerate)
+            sr = model.samplerate
+        wav_in = wav.unsqueeze(0).to(device)
         ref = wav_in.mean(0)
         wav_in = (wav_in - ref.mean()) / ref.std()
         jobs[job_id]["progress"] = 40
 
         out = apply_model(model, wav_in, device=device, split=True, shifts=1, overlap=0.25)
-        out = out * ref.std() + ref.mean()  # (1, stems, channels, samples)
+        out = out * ref.std() + ref.mean()
         jobs[job_id]["progress"] = 85
 
-        sources = model.sources  # ['drums','bass','other','vocals']
+        sources = model.sources
         vocals_idx = sources.index("vocals")
         accomp_idx = [i for i in range(len(sources)) if i != vocals_idx]
 
